@@ -20,20 +20,16 @@ cargo test --workspace
 
 No hardware, no network, no Docker. If they pass, your checkout is sound.
 
-**On Linux** that command needs some C libraries first, the same ones CI installs: `padd` binds
-`libudev` through `gilrs`, and `mediad`'s pipeline is `cfg(target_os = "linux")`, so a Linux host
-compiles GStreamer where a Mac does not.
+The toolchain and everything it links come from `flake.nix`: `direnv allow` once and the shell
+activates on `cd`, or `nix develop` without direnv. No `rustup`, no distro packages.
 
-```bash
-sudo apt-get install -y libudev-dev libgstreamer1.0-dev
-```
+**On Linux** that shell also carries the C libraries CI installs: `padd` binds `libudev` through
+`gilrs`, and `mediad`'s pipeline is `cfg(target_os = "linux")`, so a Linux host compiles GStreamer
+where a Mac does not. (`flake.nix` adds them under `stdenv.isLinux`; the apt names, should anyone
+need them outside Nix, are the ones in `.github/workflows/ci.yml`.)
 
-```bash
-sudo apt-get install -y libgstreamer-plugins-base1.0-dev libgstreamer-plugins-bad1.0-dev
-```
-
-**On macOS** the command above is the whole of it — **942 tests passing**, nothing excluded. Two
-of the ToF driver's own tests do not run there, because there is no driver to run them against:
+**On macOS** `cargo test --workspace` is the whole of it — **942 tests passing**, nothing excluded.
+Two of the ToF driver's own tests do not run there, because there is no driver to run them against:
 `vendor/platform.c` reaches the bus through `linux/i2c.h`, so `build.rs` compiles it on Linux
 targets only and `sensor.rs` offers a `Sensor` that cannot be opened. `tofd` still builds and
 `tofd --fake` still serves frames, which is the only way it runs off a board anyway.

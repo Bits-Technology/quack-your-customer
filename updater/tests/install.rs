@@ -17,6 +17,26 @@ use std::process::Output;
 
 use test_support::Publisher;
 
+/// A `systemd-run` that reports success and does nothing, written to `bin`.
+///
+/// Once a release has landed, the engine schedules its deferred restarts through whatever
+/// `systemd-run` is first on `PATH`, and the subcommand under test has no switch to turn
+/// that off the way `apply.rs` has `Engine::without_deferred_restarts`. On a CI runner with
+/// no polkit agent the real call fails at once and is swallowed. On a developer's desktop
+/// it opens an authentication dialog for starting a root-owned transient timer, which
+/// nobody should approve. With the stub ahead on `PATH` the request never leaves the test.
+///
+/// Only `systemd-run` is stubbed. `install` overrides `on_apply` and `health` itself, and
+/// that those overrides hold is what this file proves, so nothing else is hidden from it.
+fn write_systemd_run_stub(bin: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::create_dir_all(bin).unwrap();
+    let stub = bin.join("systemd-run");
+    std::fs::write(&stub, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
 /// A robot that has never been updated: published releases, trusted keys, an empty
 /// install tree, and a config carrying the **production** `on_apply` and `health`
 /// settings.
@@ -42,6 +62,7 @@ impl FreshRobot {
         // Deliberately NOT creating `install`: a fresh robot has no install tree, and the
         // engine creating it is part of what this tests.
         let publisher = Publisher::new(root.join("keys"), published.clone());
+        write_systemd_run_stub(&root.join("bin"));
 
         let fresh = Self {
             _dir: dir,
@@ -162,8 +183,18 @@ path = "{}""#,
             .args(extra)
             // Warn keeps the output to the lines these tests assert on, and matches what
             // the installer script shows an operator.
-            .env("RUST_LOG", "warn");
+            .env("RUST_LOG", "warn")
+            .env("PATH", self.path());
         cmd.output().unwrap()
+    }
+
+    /// The inherited `PATH` with the `systemd-run` stub ahead of everything else.
+    fn path(&self) -> std::ffi::OsString {
+        let inherited = std::env::var_os("PATH").unwrap_or_default();
+        std::env::join_paths(
+            std::iter::once(self.root.join("bin")).chain(std::env::split_paths(&inherited)),
+        )
+        .unwrap()
     }
 
     fn live(&self) -> Option<String> {

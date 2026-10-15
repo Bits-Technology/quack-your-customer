@@ -28,3 +28,11 @@ __pycache__/
 # holding `*` so it self-ignores; this is for the person who reaches for `python -m venv`, which
 # does not, and it is the same accident `__pycache__` above was added for.
 .venv/
+
+# Nix: `nix build` output links, and nix-direnv's cache of the devShell.
+result
+result-*
+.direnv/
+
+# IDE state. The checked-in project is the Cargo workspace, not anyone's editor.
+.idea/

@@ -103,6 +103,24 @@ pub struct HookOutcome {
 /// the update log.
 const MAX_OUTPUT: usize = 8 * 1024;
 
+/// What a hook sees as `PATH`: the board's standard directories, fixed, so a hook
+/// behaves the same however the updater itself was launched.
+const HOOK_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+
+#[cfg(not(test))]
+fn hook_path() -> String {
+    HOOK_PATH.to_owned()
+}
+
+/// The tests' hooks are plain `/bin/sh` scripts that call `sleep`, `head` and `tr`.
+/// A NixOS host keeps those outside the FHS directories, so under test a hook
+/// inherits the test process's `PATH` instead. The production value above is
+/// untouched.
+#[cfg(test)]
+fn hook_path() -> String {
+    std::env::var("PATH").unwrap_or_else(|_| HOOK_PATH.to_owned())
+}
+
 /// Run a hook if present.
 ///
 /// A missing hook is success (`ran: false`) — most releases won't have one. A
@@ -132,10 +150,7 @@ pub async fn run(
         .env_clear()
         // A minimal environment: hooks get what we pass plus PATH, so their
         // behaviour doesn't depend on however systemd happened to invoke us.
-        .env(
-            "PATH",
-            "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-        )
+        .env("PATH", hook_path())
         .kill_on_drop(true)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
