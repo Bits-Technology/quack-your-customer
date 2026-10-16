@@ -512,6 +512,22 @@ mode = "walk"
 # yawn_open = 0.6
 # yawn_pitch = -0.15
 
+[bow]
+# The polite bow, `robotctl robot do bow`: the gait is asked to lean forward and drop its head,
+# hold it, and come back. No network of its own — the body-pose and head commands the gait already
+# tracks, written over time — so the fall reflex stays armed throughout, and a skill table entry
+# named `bow` (a trained one) takes the name over.
+#
+# Radians and seconds; positive pitch is forward and down. The lean is bounded by what the gait
+# was trained to follow, about 12° either way for velstand: a larger pitch is asking, not getting.
+# Read once at startup.
+# pitch = 0.26
+# neck_pitch = 0.15
+# head_pitch = 0.35
+# down_s = 0.8
+# hold_s = 0.6
+# up_s = 0.8
+
 [media]
 # What mediad streams: the camera, and at what quality. Read by mediad at startup, so a change
 # here needs `systemctl restart mediad` — not robotd. `robotctl configure` offers the right one.

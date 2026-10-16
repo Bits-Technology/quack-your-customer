@@ -81,6 +81,7 @@ pub struct Params {
     pub head_imu: HeadImuParams,
     pub chorale: ChoraleParams,
     pub idle: IdleParams,
+    pub bow: BowParams,
     pub media: MediaParams,
     ///
     /// `[detect]` until 2026-09: in `robotctl configure` that read as "detect what?", one line
@@ -853,6 +854,68 @@ pub struct ChoraleParams {
     /// Whether this robot may sing with others at all. `false` — and it is derived rather than
     /// written out, so that the default cannot be changed by editing one word.
     pub accept: bool,
+}
+
+/// `[bow]` — the polite bow, `robot.do bow` (`robotd/src/bow.rs`).
+///
+/// Not a network: the gait is asked to lean forward and drop its head, hold it, and come back,
+/// through the body-pose and head commands it already tracks. These say how deep and how long.
+/// The lean is bounded by what the gait was trained to follow — about 12° either way for
+/// velstand — so a larger `pitch` is asking, not getting.
+///
+/// Angles are radians, positive is forward and down; durations seconds. Read once at startup.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct BowParams {
+    /// How far the body leans forward at the bottom of the bow.
+    pub pitch: f64,
+    /// How far the neck leans forward with it.
+    pub neck_pitch: f64,
+    /// How far the head drops.
+    pub head_pitch: f64,
+    /// How long the way down takes.
+    pub down_s: f64,
+    /// How long the bow is held at the bottom.
+    pub hold_s: f64,
+    /// How long the way back up takes.
+    pub up_s: f64,
+}
+
+impl Default for BowParams {
+    fn default() -> Self {
+        Self {
+            pitch: 0.26,
+            neck_pitch: 0.15,
+            head_pitch: 0.35,
+            down_s: 0.8,
+            hold_s: 0.6,
+            up_s: 0.8,
+        }
+    }
+}
+
+impl BowParams {
+    /// What is wrong with these values, if anything, as (key, reason).
+    fn invalid(&self) -> Option<(&'static str, &'static str)> {
+        for (key, value) in [
+            ("pitch", self.pitch),
+            ("neck_pitch", self.neck_pitch),
+            ("head_pitch", self.head_pitch),
+        ] {
+            if !value.is_finite() || value.abs() > 1.0 {
+                return Some((key, "must be a finite angle within ±1 rad"));
+            }
+        }
+        for (key, value) in [("down_s", self.down_s), ("up_s", self.up_s)] {
+            if !(value.is_finite() && value > 0.0) {
+                return Some((key, "must be a positive number of seconds"));
+            }
+        }
+        if !(self.hold_s.is_finite() && self.hold_s >= 0.0) {
+            return Some(("hold_s", "must be zero or more seconds"));
+        }
+        None
+    }
 }
 
 /// `[idle]` — the robot looking around while nothing is happening (`robotd/src/idle_head.rs`).
@@ -2477,6 +2540,12 @@ pub enum ParamsError {
         key: &'static str,
         reason: &'static str,
     },
+    #[error("{path}: bow.{key} {reason}")]
+    Bow {
+        path: String,
+        key: &'static str,
+        reason: &'static str,
+    },
     #[error(
         "{path}: pickup.resume_threshold ({resume}) must be below pickup.pause_threshold \
          ({pause}), and both between 0 and 1 — they are a hysteresis band on a probability"
@@ -2590,6 +2659,13 @@ impl Params {
         }
         if let Some((key, reason)) = self.idle.invalid() {
             return Err(ParamsError::Idle {
+                path: path.display().to_string(),
+                key,
+                reason,
+            });
+        }
+        if let Some((key, reason)) = self.bow.invalid() {
+            return Err(ParamsError::Bow {
                 path: path.display().to_string(),
                 key,
                 reason,
@@ -4085,6 +4161,7 @@ mod tests {
         assert_eq!(from_file.safety.limp_fall, built_in.safety.limp_fall);
         assert_eq!(from_file.pickup, built_in.pickup);
         assert_eq!(from_file.idle, built_in.idle);
+        assert_eq!(from_file.bow, built_in.bow);
         assert_eq!(
             from_file.safety.battery_empty_shutdown,
             built_in.safety.battery_empty_shutdown

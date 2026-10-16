@@ -1182,6 +1182,7 @@ mod tests {
                 "duck_detector",
                 "chorale",
                 "idle",
+                "bow",
                 "pickup",
                 "theremin",
                 "head_imu",

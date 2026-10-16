@@ -572,9 +572,12 @@ globally when it was squatting in the walk slot.
 `walk` and `stand` are the fallback pair, chosen by command magnitude, and there is nothing below
 them to hand back to. `sitstand` is latched and driven internally by the shutdown sit, not only
 by a button — `scripted`, in the manifest's word. `ground_pick`
-writes a phase rather than a constant. None of the four is a generic one-shot, and a set entry
-may not answer to `ground_pick` or `sit_toggle` — a second network behind either name would be
-fed an all-zero command it never trained on. The guard is on the encoding as well as the name: a
+writes a phase rather than a constant. `bow` is the odd one out: no network at all — the loop
+writes a timed body pitch and head drop onto the gait's own command (`robotd/src/bow.rs`), which
+is why it alone keeps the fall reflex armed, and why a set entry *may* take its name: a trained
+bow in the table replaces the choreography. None of the others is a generic one-shot, and a set
+entry may not answer to `ground_pick` or `sit_toggle` — a second network behind either name would
+be fed an all-zero command it never trained on. The guard is on the encoding as well as the name: a
 `phase` or `posture_flag` entry is never loaded as a skill however it is called. What the set
 *does* get to say about these arms is their timing (§9.3) — the pick's cycle and cutoff, the
 rise and the seat's settle — since those are properties of the trained network, not of the build.

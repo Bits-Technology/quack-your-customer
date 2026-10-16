@@ -36,7 +36,7 @@ ONBOARDING
   pep health                The full health report (robotctl health)
 
 DUCK DILIGENCE
-  pep do <skill>            Perform a trick: roulade, kick_left, kick_right, sit_toggle, ground_pick
+  pep do <skill>            Perform a trick: bow, roulade, kick_left, kick_right, sit_toggle, ground_pick
   pep skills                The tricks Pep knows: what `pep do` answers to
   pep walk [vx] [vyaw]      Walk for 8 s (default 0.3 m/s straight ahead)
   pep monitor               Live joints, IMU, depth and sticks (q quits)
@@ -119,6 +119,7 @@ enum Command {
     /// after `pep wake`.
     ///
     /// The tricks every duck ships with:
+    ///   bow            a polite bow: lean forward, head down, hold, and back up — about 2 s
     ///   roulade        a forward roll over the head, 1 s, landing back on its feet
     ///   kick_left      a left-leg kick, 0.5 s
     ///   kick_right     a right-leg kick, 0.5 s

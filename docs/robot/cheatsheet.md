@@ -197,14 +197,17 @@ Two tables: the seven slots, then the skills — what runs by default, and what 
  * polite-bow        4 s  fffiloni/microduck-polite-bow-b1d864/main/policy.onnx
    ground_pick         —  driven by the robot itself
    sit_toggle          —  driven by the robot itself
+   bow                 —  driven by the robot itself
 ```
 
 A `*` marks every row config has an opinion about, with a count at the bottom. A slot you switched
 off says `switched off` rather than looking like one the robot never had. The directory comes off
 the path because the `ORIGIN` column already says which one it was.
 
-`ground_pick` and `sit_toggle` have no length because the robot drives them itself — they answer
-to `robot do` like the rest, but they are not entries you can change.
+`ground_pick`, `sit_toggle` and `bow` have no length because the robot drives them itself — they
+answer to `robot do` like the rest, but they are not entries you can change. The bow is not even a
+network: the gait is asked to lean and drop its head, through the commands it already tracks, and
+`[bow]` in `robotd.toml` says how deep and how long.
 
 #### A newer official set
 
