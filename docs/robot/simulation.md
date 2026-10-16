@@ -171,7 +171,7 @@ Environment variables, all optional:
 | `DUCK_SIM_DUCK` | `duck-a` | Which duck `ctl` and `monitor` talk to. |
 | `DUCK_SIM_KEYFRAME` | `SIT` | Where a duck starts: `SIT` folded on the floor (the standing policy rises from it), `HOME`, `STAND`, `FOLD`. |
 | `DUCK_SIM_VIEWER` | `1` | `0` runs MuJoCo headless. |
-| `DUCK_SIM_VIEW` | `follow` | The viewer's camera: `follow` keeps the first duck in frame (`follow:0.5,90,-30` is metres, azimuth, elevation); `free` is the viewer's own, mouse-driven camera. Arrows orbit, Page Up/Down zoom, Home resets, F lets go. |
+| `DUCK_SIM_VIEW` | `follow` | The viewer's camera: `follow` keeps the first duck in frame (`follow:0.5,90,-30` is metres, azimuth, elevation); `free` is the viewer's own, mouse-driven camera. In the window: arrows orbit and tilt, Page Up/Down zoom, Home is the follow view, End the free overview, and each resets its view when pressed again. The letters are the viewer's own display toggles (F is contact forces), so they are left to it. |
 | `DUCK_SIM_PORT` | `7801` | The first duck's body port; +1 per duck. |
 | `DUCK_SIM_FRAME_PORT` | `7901` | The first camera's frame port; +1 per camera. |
 

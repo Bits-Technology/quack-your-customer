@@ -89,7 +89,9 @@ enum Command {
     ///   DUCK_SIM_VIEW=follow       the camera follows Pep (default); free is the mouse camera;
     ///                              follow:0.5,90,-30 is metres, azimuth, elevation
     ///
-    /// In the window, no mouse needed: arrows orbit, Page Up/Down zoom, Home resets, F lets go.
+    /// In the window, no mouse needed: arrows orbit and tilt, Page Up/Down zoom, Home follows
+    /// Pep, End is the free overview, and each resets its view when pressed again. The letters
+    /// belong to the viewer: F toggles contact-force arrows, C contact points, T transparency.
     ///
     /// Needs a microduck_rl checkout with its venv beside this repo, or wherever DUCK_SIM_RL
     /// points. For the real unit files under systemd, `pep sim boot 4` instead.
