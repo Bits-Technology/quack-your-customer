@@ -4838,20 +4838,29 @@ fn run_pad_bindings(
     Ok(())
 }
 
-/// The one-shot skills the robot says it has, or `None` if it is not answering.
+/// Every name `robot.do` answers to on this robot, or `None` if it is not answering.
 ///
-/// From `robot.subscribe`'s acknowledgement, which is where a client learns what a robot can do
-/// now that the set is config rather than five compiled-in names.
+/// From `robot.skills`, which is the only answer that has both halves. `robot.subscribe`'s
+/// acknowledgement carries the skill table alone, and reading it here marked the two buttons the
+/// pad ships bound to — `sit_toggle` and `ground_pick` — as skills the robot did not have, and
+/// refused to bind them: the same trap the daemon's `do_names` closes on its side.
 fn robot_skills(robot_socket: &Path) -> Option<Vec<String>> {
     let mut client = Client::connect_to("robotd", robot_socket).ok()?;
     client.hello().ok()?;
-    let result = client
-        .call(&proto::Call::RobotSubscribe(proto::SubscribeParams {
-            hz: Some(1),
-        }))
-        .ok()?;
-    let ack: proto::SubscribeResult = result.result_as().ok()?;
-    Some(ack.skills)
+    let result = result_of(client.call(&proto::Call::RobotSkills).ok()?).ok()?;
+    let skills: proto::SkillsResult = decode(&result).ok()?;
+    Some(bindable_names(&skills))
+}
+
+/// The names a button may be bound to: the built-in ones the daemon drives itself, then the
+/// table, in the order the robot tries them.
+fn bindable_names(skills: &proto::SkillsResult) -> Vec<String> {
+    skills
+        .built_in
+        .iter()
+        .cloned()
+        .chain(skills.skills.iter().map(|s| s.name.clone()))
+        .collect()
 }
 
 fn run_pad(socket: &Path, config: &Path, command: PadCommand) -> Result<(), Failure> {
@@ -5808,6 +5817,34 @@ mod tests {
             swap_settled(&policies, &Slot::ALL, None),
             Some(Err("the onnxruntime dylib is not on this board".into()))
         );
+    }
+
+    /// **The names a button may be bound to include the two the daemon drives itself.**
+    ///
+    /// `robot.subscribe`'s acknowledgement lists the skill table and nothing else, and checking
+    /// bindings against it marked `a` and `b` — bound to `sit_toggle` and `ground_pick` on every
+    /// robot that ships — as skills the robot did not have, and refused `pad bind` for either.
+    #[test]
+    fn the_daemon_driven_skills_are_bindable() {
+        let skills = proto::SkillsResult {
+            skills: vec![proto::SkillParams {
+                name: "roulade".to_owned(),
+                ..Default::default()
+            }],
+            built_in: vec!["ground_pick".to_owned(), "sit_toggle".to_owned()],
+        };
+        assert_eq!(
+            bindable_names(&skills),
+            ["ground_pick", "sit_toggle", "roulade"]
+        );
+
+        // A robot whose sitstand slot is switched off genuinely cannot sit, and says so by
+        // leaving the name out — nothing here puts it back.
+        let without = proto::SkillsResult {
+            skills: Vec::new(),
+            built_in: vec!["ground_pick".to_owned()],
+        };
+        assert_eq!(bindable_names(&without), ["ground_pick"]);
     }
 
     /// **A skill somebody just added has to be visible in the command they will look in.**
