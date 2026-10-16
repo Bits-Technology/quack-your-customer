@@ -4,9 +4,9 @@
 # docs/design/architecture.md §1. `robotd`, `btd` and `mediad` are all siblings now.
 [workspace]
 resolver = "3"
-members = ["btd", "configd", "duck-ble", "duck-control", "duck-detect", "duck-ether", "duck-ipc-proto", "duckctl", "kinematics", "mediad", "netpadd", "nfc", "odometry", "pad-imu", "pad-map", "padd", "pet-detect", "sounds", "tof", "updater", "robotctl", "robotd", "robotd-params", "test-support", "uyvy", "xtask"]
+members = ["btd", "configd", "duck-ble", "duck-control", "duck-detect", "duck-ether", "duck-ipc-proto", "duckctl", "kinematics", "mediad", "netpadd", "nfc", "odometry", "pad-imu", "pad-map", "padd", "pep", "pet-detect", "sounds", "tof", "updater", "robotctl", "robotd", "robotd-params", "test-support", "uyvy", "xtask"]
 
-# Everything except `duckctl`, and that exception is the whole reason this key exists.
+# Everything except `duckctl` and `pep`, and those exceptions are the whole reason this key exists.
 #
 # `cargo board --bins` — in `dev-push.sh` and in the release workflow — builds every default
 # member for aarch64, which is right for a robot's daemons and wrong for the client a developer
@@ -17,7 +17,9 @@ members = ["btd", "configd", "duck-ble", "duck-control", "duck-detect", "duck-et
 # them and they would have to be kept in step by hand, which is the failure this repo keeps
 # writing down. One list here, and a new daemon is picked up by both without anybody remembering.
 #
-# `--workspace` is unaffected, so CI still lints and tests `duckctl` exactly as before.
+# `pep` is the same shape: a tool for the developer's own terminal, wrapping `scripts/duck-sim`.
+#
+# `--workspace` is unaffected, so CI still lints and tests `duckctl` and `pep` exactly as before.
 default-members = ["btd", "configd", "duck-ble", "duck-ble", "duck-control", "duck-detect", "duck-ipc-proto", "kinematics", "mediad", "netpadd", "nfc", "odometry", "pad-imu", "pad-map", "padd", "pet-detect", "sounds", "tof", "updater", "robotctl", "robotd", "robotd-params", "test-support", "uyvy", "xtask"]
 
 # ONNX Runtime, which robotd dlopens to run a policy. One source of truth: `xtask package`

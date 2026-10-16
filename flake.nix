@@ -26,7 +26,8 @@
           echo "    cargo test --workspace     Check the checkout (no hardware, no network)"
           echo "    cargo fmt --all            Format"
           echo "    cargo clippy --workspace   Lint"
-          echo "    scripts/duck-sim           A duck in MuJoCo (docs/robot/simulation.md)"
+          echo "    pep                        Agent Pep from the terminal: wake, do roulade, sleep"
+          echo "    scripts/duck-sim           The simulator pep wraps (docs/robot/simulation.md)"
           echo "    ssh microduck              Visit Pep: robotctl monitor | configure | update"
           echo ""
           echo "  CONTRIBUTING.md covers building, the board target and releases"
@@ -42,6 +43,13 @@
         uvBuild = pkgs.python312Packages.uv-build;
         uvConfig = pkgs.writeText "uv.toml" ''
           no-build-isolation-package = ["mjlab-microduck"]
+        '';
+
+        # `pep` is a crate in this workspace, and this is how it reaches a prompt without an install
+        # step: `cargo run` from the checkout the shell was entered in, so it is always the code on
+        # the branch you are on. The first call compiles it; after that cargo returns at once.
+        pep = pkgs.writeShellScriptBin "pep" ''
+          exec cargo run --quiet --manifest-path "''${PEP_REPO:?pep: enter the repo nix shell first (direnv allow)}/Cargo.toml" -p pep -- "$@"
         '';
 
         # What the simulator's binary wheels dlopen and expect the system to provide. NixOS has
@@ -89,6 +97,8 @@
               pkgs.uv
               pkgs.python312
               uvBuild
+
+              pep
             ]
             ++ lib.optionals pkgs.stdenv.isLinux [
               # The C libraries CI apt-installs: padd binds libudev through gilrs, and mediad's
@@ -114,7 +124,8 @@
             shellHook = ''
               # Where `scripts/duck-sim` finds the MuJoCo half: a microduck_rl checkout beside this
               # repo, unless DUCK_SIM_RL already says otherwise.
-              export DUCK_SIM_RL="''${DUCK_SIM_RL:-$(cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)/.." && pwd)/microduck_rl}"
+              export PEP_REPO="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+              export DUCK_SIM_RL="''${DUCK_SIM_RL:-$(cd "$PEP_REPO/.." && pwd)/microduck_rl}"
               ${welcomeMessage}
             '';
           }

@@ -1,0 +1,18 @@
+[package]
+name = "pep"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Agent Pep from the terminal — the short way of saying what scripts/duck-sim already does"
+
+# **A laptop tool, like `duckctl`, and kept off the board the same way:** it is a member of the
+# workspace and not a default member, so `cargo board --bins` never cross-compiles it and nothing
+# in a release depends on it. `--workspace` still lints and tests it.
+#
+# It depends on nothing of the robot's on purpose. Everything it does is an argument list for
+# `scripts/duck-sim`, which owns which socket, which params file and which duck; a dependency on
+# `duck-ipc-proto` would be the first step towards a second client that could disagree with the
+# script, and the script is the one that is tested against a standing duck.
+
+[dependencies]
+clap = { workspace = true, features = ["derive"] }

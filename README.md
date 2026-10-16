@@ -11,6 +11,20 @@ Agent Pep is a [Pollen Robotics Microduck](https://pollen-robotics.com/microduck
 
 ## Getting started
 
+Pep has not reported for duty yet, so for now Pep is simulated: the real daemons against a MuJoCo
+body. `pep` is the front desk, from inside the repo's Nix shell (`direnv allow` once):
+
+```sh
+pep wake             # Pep stands up in a MuJoCo window
+pep do roulade       # enhanced duck diligence
+pep walk             # a patrol, 8 s
+pep status           # still standing?
+pep sleep            # end of shift
+pep                  # everything else
+```
+
+Once the real Pep clocks in:
+
 ```sh
 ssh microduck
 robotctl monitor     # check on Pep

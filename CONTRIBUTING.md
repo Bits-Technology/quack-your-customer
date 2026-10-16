@@ -93,6 +93,7 @@ the libraries they drive — no sockets, no systemd, nothing starts them
 the tools
   robotctl/       the local CLI, including `monitor`
   duckctl/        the laptop-side client — never shipped, never cross-built
+  pep/            `pep wake`, `pep do roulade`: scripts/duck-sim with shorter words — never shipped
   xtask/          package · sign · promote — build tooling, never shipped
   test-support/   signed-release fixtures for tests; never shipped
 

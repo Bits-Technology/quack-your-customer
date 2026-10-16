@@ -73,6 +73,9 @@ scripts/duck-sim realtime       # how fast the world is running (see below)
 scripts/duck-sim down
 ```
 
+`pep` says the same with shorter words — `pep wake`, `pep do roulade`, `pep sleep` — and `pep -n`
+prints the line it stands for. It is the `pep/` crate, on the path in the Nix shell.
+
 Without an argument the script builds the daemons from the branch you are on, writes a params file
 naming the policies in this repo, starts `duck-body`, `tofd --sim` and `robotd --sim` under
 `~/.cache/duck-sim`, and enables the standing policy. `ctl` is `robotctl` pointed at that duck's
