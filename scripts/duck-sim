@@ -765,8 +765,12 @@ Try DUCK_SIM_VIEWER=0, or fewer ducks." ;;
 down_containers() {
     # Called by every `down`, including the plain one. A machine with no systemd has no containers
     # to stop, and sixteen `sudo systemctl` that cannot resolve would ask for a password first.
+    # Asking whether a unit is active needs no root either, and a `sudo` in front of it asked for a
+    # password sixteen times on a machine with systemd, password sudo and no containers at all —
+    # or, run from anything without a terminal, hung for half a minute on each. Only stopping one
+    # is privileged, and `-n` there keeps the rest of the teardown running when that is refused.
     #
-    # `set -eu` is on at the top of this file and is never turned off, which is what the `|| true` on
+    # `set -eu` is on at the top of this file and is never turned off, which is what the `|| say` on
     # the two `sudo` calls below is for. That is load-bearing rather than tidiness: a `stop` or an
     # `umount` that failed would end this loop where it stands, and the rest of `down_containers`
     # would never run — ducks left booted, overlays left mounted, which is the one outcome this
@@ -776,12 +780,12 @@ down_containers() {
     i=0
     while [ "$i" -lt 16 ]; do
         name="$(duck_name "$i")"
-        if sudo systemctl is-active --quiet "$name" 2>/dev/null; then
-            sudo systemctl stop "$name" 2>/dev/null || true
+        if systemctl is-active --quiet "$name" 2>/dev/null; then
+            sudo -n systemctl stop "$name" 2>/dev/null || say "$name is still running: sudo systemctl stop $name"
         fi
         merged="$STATE/ducks/$name/merged"
         if mountpoint -q "$merged" 2>/dev/null; then
-            sudo umount "$merged" 2>/dev/null || true
+            sudo -n umount "$merged" 2>/dev/null || say "$merged is still mounted: sudo umount $merged"
         fi
         i=$((i + 1))
     done
