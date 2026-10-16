@@ -18,7 +18,6 @@
 //! publishes and never calls into the loop — a wedged loop reports itself unhealthy rather
 //! than hanging the caller.
 
-mod bow;
 mod chorale;
 mod control;
 mod head_imu;
@@ -539,6 +538,10 @@ fn drop_unloadable_overrides_with(
 }
 
 struct RobotState {
+    /// `[bow]`, read once at startup: how far into the pick the bow goes, and how long. Here
+    /// rather than in the policy config because a controller is rebuilt on every policy change
+    /// and the bow is not a policy — it is the pick's arm, tuned once.
+    bow: params::BowParams,
     /// Epoch for every timestamp below. `Instant` so the clock cannot go backwards.
     started: Instant,
     ticks: AtomicU64,
@@ -727,6 +730,7 @@ impl RobotState {
         force_busy: bool,
     ) -> Self {
         Self {
+            bow: params.bow,
             started: Instant::now(),
             ticks: AtomicU64::new(0),
             missed: AtomicU64::new(0),
@@ -1874,7 +1878,7 @@ fn change_disturbs(
         Driving::Stand => before.stand != after.stand,
         Driving::SitStand => before.sitstand != after.sitstand,
         Driving::Seated => false,
-        Driving::GroundPick => before.ground_pick != after.ground_pick,
+        Driving::GroundPick | Driving::Bow => before.ground_pick != after.ground_pick,
         Driving::Skill(_) => before.skills != after.skills,
     }
 }
@@ -1931,6 +1935,7 @@ fn candidate_params(
 fn try_controller(
     policy_cfg: &params::ResolvedPolicy,
     limp_fall: bool,
+    bow: params::BowParams,
 ) -> Result<Option<Controller>, PolicyError> {
     if !policy_cfg.enabled {
         tracing::warn!("policy disabled; holding the startup pose");
@@ -1950,6 +1955,7 @@ fn try_controller(
             ground_pick_end_phase: policy_cfg.ground_pick_end_phase,
             ground_pick_action_scale: policy_cfg.ground_pick_action_scale,
             ground_pick_gain_ratio: policy_cfg.ground_pick_gain_ratio,
+            bow,
             sitstand_rise_s: policy_cfg.sitstand_rise_s,
             sitstand_ramp_s: policy_cfg.sitstand_ramp_s,
             skills: policy_cfg.skills.clone(),
@@ -2062,7 +2068,7 @@ fn build_controller(
     limp_fall: bool,
     state: &RobotState,
 ) -> Option<Controller> {
-    match try_controller(policy_cfg, limp_fall) {
+    match try_controller(policy_cfg, limp_fall, state.bow) {
         Ok(controller) => controller,
         Err(e) => {
             tracing::error!(error = %e, "policy unavailable; holding the pose");
@@ -2316,9 +2322,6 @@ async fn control_loop<T: RobotIo>(
             .map_or(1, |d| d.as_nanos() as u64),
     );
 
-    // The polite bow — see `bow`: a timed lean and nod on the gait's own commands.
-    let mut bow = bow::Bow::new(params.bow);
-
     // The note the theremin is holding, kept across ticks so a hand leaving the frame fades
     // the note at its own pitch instead of gliding to the bottom of the range on its way out.
     let mut theremin_hz = 0.0f64;
@@ -2567,7 +2570,7 @@ async fn control_loop<T: RobotIo>(
                         }
                     }
                     if requests.bow {
-                        outcome("bow", start_bow(controller, &mut bow, tick_start));
+                        outcome("bow", controller.start_bow());
                     }
                     // The configurable one-shots, in priority order. A held button lands here
                     // every tick, so only the *start* of one is journal-worthy: `Ok(false)` is a
@@ -2792,13 +2795,15 @@ async fn control_loop<T: RobotIo>(
                 let (tx, rx) = std::sync::mpsc::sync_channel(1);
                 let load_cfg = cfg.clone();
                 let limp_fall = params.safety.limp_fall;
+                let bow = state.bow;
                 let spawned = std::thread::Builder::new()
                     .name("policy-load".to_owned())
                     .spawn(move || {
                         // A receiver that has gone away is a loop that has stopped; nothing
                         // to do with the result then.
-                        let _ = tx
-                            .send(try_controller(&load_cfg, limp_fall).map_err(|e| e.to_string()));
+                        let _ = tx.send(
+                            try_controller(&load_cfg, limp_fall, bow).map_err(|e| e.to_string()),
+                        );
                     });
                 match spawned {
                     Err(e) => tracing::error!(
@@ -3148,8 +3153,6 @@ async fn control_loop<T: RobotIo>(
         }
         // Still: the policy has the robot, nothing asks it to move or is moving it, nobody has
         // steered the head lately, and it is not singing (the chorale owns the head then).
-        // The bow, if one is running — see `bow`. Ticked before `still`, since bowing is not it.
-        let bowing = bow.tick(tick_start);
         let still = was_driving
             && !in_limp_fall
             && !pickup_paused
@@ -3157,7 +3160,6 @@ async fn control_loop<T: RobotIo>(
             && twist_ema.iter().all(|v| v.abs() < 1e-3)
             && snapshot.head_age >= idle_head.after()
             && chorale_head.iter().all(|v| v.abs() < 1e-3)
-            && !bow.active()
             && controller.as_ref().is_some_and(|c| !c.busy());
         let idle = idle_head.tick(tick_start, still, period);
         // The breath moves the body pose, which only the standing network is trained on — and
@@ -3178,19 +3180,17 @@ async fn control_loop<T: RobotIo>(
             // The chorale's sway rides on top of whatever the head was asked to do, computed
             // last tick (20 ms stale, invisible at sway speed) and slewed to zero when the
             // singing stops so the head settles rather than snaps. The idle sweep rides the
-            // same way, and the two never overlap: singing is not still. The bow is a third
-            // rider, on the head and on the body pitch, and the loop holds the body-pose mode
-            // for it below so the gait stands still and leans.
+            // same way, and the two never overlap: singing is not still.
             head: [
-                head_ema[0] + chorale_head[0] + idle_offset[0] + bowing.head[0],
-                head_ema[1] + chorale_head[1] + idle_offset[1] + bowing.head[1],
-                head_ema[2] + chorale_head[2] + idle_offset[2] + bowing.head[2],
-                head_ema[3] + chorale_head[3] + idle_offset[3] + bowing.head[3],
+                head_ema[0] + chorale_head[0] + idle_offset[0],
+                head_ema[1] + chorale_head[1] + idle_offset[1],
+                head_ema[2] + chorale_head[2] + idle_offset[2],
+                head_ema[3] + chorale_head[3] + idle_offset[3],
             ],
             body: BodyPose {
-                z: body_ema[0] + breath + bowing.body[0],
-                roll: body_ema[1] + bowing.body[1],
-                pitch: body_ema[2] + bowing.body[2],
+                z: body_ema[0] + breath,
+                roll: body_ema[1],
+                pitch: body_ema[2],
             },
         };
 
@@ -3599,13 +3599,7 @@ async fn control_loop<T: RobotIo>(
             }
             (true, Some(sensors)) => {
                 let controller = controller.as_mut().expect("driving implies a controller");
-                match controller.step(
-                    sensors,
-                    &command,
-                    snapshot.pose.active || bow.active(),
-                    dt,
-                    scale_mult,
-                ) {
+                match controller.step(sensors, &command, snapshot.pose.active, dt, scale_mult) {
                     Ok(step) => (
                         step.targets,
                         step.gain,
@@ -4621,9 +4615,9 @@ fn already_loaded(
 /// which is what an editor needs, including an entry whose file has gone missing.
 ///
 /// `built_in` carries the names `robot.do` answers to that are not table entries at all:
-/// `ground_pick` writes a scripted phase, `sit_toggle` is latched, and `bow` is choreographed on
-/// the gait's own commands. A client offering "what can this robot do" needs both lists, and
-/// would otherwise conclude those three do not exist.
+/// `ground_pick` writes a scripted phase, `sit_toggle` is latched, and `bow` is the pick run
+/// partway and back. A client offering "what can this robot do" needs both lists, and would
+/// otherwise conclude those three do not exist.
 fn skills_report(state: &RobotState) -> proto::SkillsResult {
     let configured = params::Params::load(&state.config_path, false)
         .map(|p| p.policy.clone())
@@ -4654,8 +4648,7 @@ fn skills_report(state: &RobotState) -> proto::SkillsResult {
             .filter(|name| {
                 names.skills.iter().all(|s| s != name)
                     && match *name {
-                        "ground_pick" => names.ground_pick.is_some(),
-                        "bow" => names.walk.is_some(),
+                        "ground_pick" | "bow" => names.ground_pick.is_some(),
                         _ => names.sitstand.is_some(),
                     }
             })
@@ -5076,7 +5069,7 @@ fn load_policy_request(
 /// to — which is exactly what `pad.bindings` did until a test caught it.
 ///
 /// Each is conditional on the policy behind it being loaded, because a robot whose `sitstand`
-/// slot is switched off genuinely cannot sit, and a bow is the gait asked to lean. The bow alone
+/// slot is switched off genuinely cannot sit, and the bow is the pick run partway. The bow alone
 /// yields its name to a table entry, since a trained bow is a better bow.
 fn do_names(policies: &PolicyNames) -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
@@ -5086,29 +5079,11 @@ fn do_names(policies: &PolicyNames) -> Vec<String> {
     if policies.sitstand.is_some() {
         names.push("sit_toggle".to_owned());
     }
-    if policies.walk.is_some() && !policies.skills.iter().any(|s| s == "bow") {
+    if policies.ground_pick.is_some() && !policies.skills.iter().any(|s| s == "bow") {
         names.push("bow".to_owned());
     }
     names.extend(policies.skills.iter().cloned());
     names
-}
-
-/// Start the choreographed bow, if the robot is in a state to take one: standing under its gait
-/// with no other move in flight. A seated robot is refused rather than leaned over, and a bow
-/// during a bow is one bow.
-fn start_bow(
-    controller: &control::Controller,
-    bow: &mut bow::Bow,
-    now: Instant,
-) -> Result<(), &'static str> {
-    if controller.busy() {
-        return Err("another move is running");
-    }
-    match controller.driving() {
-        Some(control::Driving::Walk | control::Driving::Stand) => bow.start(now),
-        Some(control::Driving::Seated) => Err("the robot is sitting"),
-        _ => Err("the robot is not standing"),
-    }
 }
 
 fn queue_skill(state: &RobotState, intents: &Intents, skill: &str) -> bool {
@@ -5126,9 +5101,10 @@ fn queue_skill_names(policies: &PolicyNames, intents: &Intents, skill: &str) -> 
             intents.request_sit_toggle();
             true
         }
-        // The choreographed bow needs a gait to lean, and steps aside for a trained one that
-        // took its name — the table is checked first, so that entry is reachable.
-        "bow" if policies.walk.is_some() && !policies.skills.iter().any(|s| s == "bow") => {
+        // The bow is the pick run partway, so it needs the pick's network, and it steps aside
+        // for a trained one that took its name — the table is checked first, so that entry is
+        // reachable.
+        "bow" if policies.ground_pick.is_some() && !policies.skills.iter().any(|s| s == "bow") => {
             intents.request_bow();
             true
         }
@@ -6009,7 +5985,7 @@ mod tests {
             skills: vec!["roulade".to_owned()],
             ..Default::default()
         });
-        assert_eq!(names, ["ground_pick", "sit_toggle", "roulade"]);
+        assert_eq!(names, ["ground_pick", "sit_toggle", "bow", "roulade"]);
 
         // And a slot switched off takes its name away, because that robot really cannot sit.
         let without = do_names(&PolicyNames {
@@ -6021,30 +5997,35 @@ mod tests {
         assert_eq!(without, ["roulade"]);
     }
 
-    /// **The bow is the gait asked to lean, so it needs a gait** — and it is the one built-in
-    /// that yields its name: a trained bow in the table is what `robot.do bow` should run.
+    /// **The bow is the pick run partway, so it needs the pick's network** — and it is the one
+    /// built-in that yields its name: a trained bow in the table is what `robot.do bow` should
+    /// run.
     #[test]
-    fn the_bow_needs_a_gait_and_yields_to_a_trained_one() {
-        let with_gait = do_names(&PolicyNames {
-            walk: Some("velstand.onnx".to_owned()),
+    fn the_bow_needs_the_pick_and_yields_to_a_trained_one() {
+        let with_pick = do_names(&PolicyNames {
+            ground_pick: Some("alpha_ground_pick.onnx".to_owned()),
             skills: vec!["roulade".to_owned()],
             ..Default::default()
         });
-        assert_eq!(with_gait, ["bow", "roulade"]);
+        assert_eq!(with_pick, ["ground_pick", "bow", "roulade"]);
 
-        let no_gait = do_names(&PolicyNames {
-            walk: None,
+        let no_pick = do_names(&PolicyNames {
+            ground_pick: None,
             skills: vec!["roulade".to_owned()],
             ..Default::default()
         });
-        assert_eq!(no_gait, ["roulade"]);
+        assert_eq!(no_pick, ["roulade"]);
 
         let trained = PolicyNames {
-            walk: Some("velstand.onnx".to_owned()),
+            ground_pick: Some("alpha_ground_pick.onnx".to_owned()),
             skills: vec!["bow".to_owned()],
             ..Default::default()
         };
-        assert_eq!(do_names(&trained), ["bow"], "once, the table's");
+        assert_eq!(
+            do_names(&trained),
+            ["ground_pick", "bow"],
+            "once, the table's"
+        );
         let intents = Intents::default();
         assert!(queue_skill_names(&trained, &intents, "bow"));
         let taken = intents.take_skills();
@@ -7216,6 +7197,7 @@ mod tests {
             Driving::Stand,
             Driving::SitStand,
             Driving::GroundPick,
+            Driving::Bow,
         ] {
             assert!(
                 change_disturbs(Some(&moving), &intents::PolicyChange::Reload, &cfg, &cfg),

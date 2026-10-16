@@ -205,9 +205,9 @@ off says `switched off` rather than looking like one the robot never had. The di
 the path because the `ORIGIN` column already says which one it was.
 
 `ground_pick`, `sit_toggle` and `bow` have no length because the robot drives them itself — they
-answer to `robot do` like the rest, but they are not entries you can change. The bow is not even a
-network: the gait is asked to lean and drop its head, through the commands it already tracks, and
-`[bow]` in `robotd.toml` says how deep and how long.
+answer to `robot do` like the rest, but they are not entries you can change. The bow is the ground
+pick run partway and back — the same network, with its phase turning around short of the floor —
+and `[bow]` in `robotd.toml` says how far and how long.
 
 #### A newer official set
 

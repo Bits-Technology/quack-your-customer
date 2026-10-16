@@ -9,7 +9,8 @@
 //! ```text
 //! skill windows ← advance / expire (roulade window, kick timer, ground-pick phase, sit↔stand rise)
 //! command      ← the caller's smoothed command, re-encoded for the active skill
-//! net          ← roulade > kick > ground pick > sit/rise > stand-by-magnitude > walk
+//! net          ← roulade > kick > ground pick (or the bow, which is the pick run partway and
+//!                back) > sit/rise > stand-by-magnitude > walk
 //! action       ← ONNX
 //! targets      ← home pose + action_scale × action
 //! filters      ← optional first-order low-pass on head and legs
@@ -92,6 +93,8 @@ pub struct SkillTuning {
     pub ground_pick_action_scale: f64,
     /// Gain multiplier while the pick runs.
     pub ground_pick_gain_ratio: f64,
+    /// The polite bow: how far into the pick's cycle it goes, and how long each part takes.
+    pub bow: robotd_params::BowParams,
     /// How long the sitstand network rises (posture flag 0) before the main policy takes over.
     /// 1 s is enough on the robot — velstand owns the tail of the rise fine.
     pub sitstand_rise_s: f64,
@@ -111,6 +114,7 @@ impl Default for SkillTuning {
             ground_pick_end_phase: robotd_params::DEFAULT_GROUND_PICK_END_PHASE,
             ground_pick_action_scale: 1.0,
             ground_pick_gain_ratio: 1.0,
+            bow: robotd_params::BowParams::default(),
             sitstand_rise_s: robotd_params::DEFAULT_SITSTAND_RISE_S,
             sitstand_ramp_s: robotd_params::DEFAULT_SITSTAND_RAMP_S,
             skills: Vec::new(),
@@ -192,6 +196,8 @@ pub enum Driving {
     /// variant rather than a flag beside `SitStand`.
     Seated,
     GroundPick,
+    /// The ground-pick network, run partway and back — see [`Controller::start_bow`].
+    Bow,
     /// A one-shot skill, by its config name.
     Skill(String),
 }
@@ -204,6 +210,7 @@ impl std::fmt::Display for Driving {
             Driving::SitStand => f.write_str("sitstand"),
             Driving::Seated => f.write_str("seated"),
             Driving::GroundPick => f.write_str("ground_pick"),
+            Driving::Bow => f.write_str("bow"),
             Driving::Skill(name) => f.write_str(name),
         }
     }
@@ -222,6 +229,13 @@ pub struct Controller {
     previous: Option<[f64; NUM_JOINTS]>,
     /// Ground-pick phase, 0..`skills.ground_pick_end_phase`. `None` when inactive.
     ground_pick: Option<f64>,
+    /// Seconds into a bow, which drives `ground_pick` along its own profile instead of the
+    /// linear advance — see [`Self::start_bow`]. `None` when no bow is running.
+    bow: Option<f64>,
+    /// Whether the tick that set `last_net` was a bow's. Kept beside the network rather than
+    /// read off `bow`, which the end of the tick clears: the tick a bow ends on is still a
+    /// bow's tick, and would otherwise report `ground_pick` for one frame.
+    last_bow: bool,
     /// **A running skill switches the fall reflex off**, because `busy()` is what gates the
     /// limp-fall predictor and any active skill makes it true. That was uncontroversial when
     /// every one-shot was under a second; a skill configured to hold for ten is a robot with no
@@ -252,6 +266,8 @@ impl Controller {
             last_action: [0.0; ACTION_LEN],
             previous: None,
             ground_pick: None,
+            bow: None,
+            last_bow: false,
             active: None,
             sit: Sit::Up,
             sit_settle: 0.0,
@@ -267,6 +283,7 @@ impl Controller {
             Net::Stand => Driving::Stand,
             Net::SitStand if self.sit == Sit::Sitting => Driving::Seated,
             Net::SitStand => Driving::SitStand,
+            Net::GroundPick if self.last_bow => Driving::Bow,
             Net::GroundPick => Driving::GroundPick,
             Net::Skill(index) => Driving::Skill(
                 self.skills
@@ -296,6 +313,7 @@ impl Controller {
         self.last_action = from.last_action;
         self.previous = from.previous;
         self.ground_pick = from.ground_pick;
+        self.bow = from.bow;
         self.active = from.active;
         self.sit = from.sit;
         self.sit_settle = from.sit_settle;
@@ -323,6 +341,7 @@ impl Controller {
     /// rather than to a gait that would try to walk out of a chair.
     pub fn stop_moves(&mut self) {
         self.ground_pick = None;
+        self.bow = None;
         self.active = None;
         self.sit_settle = 0.0;
         self.auto_rise = false;
@@ -338,6 +357,7 @@ impl Controller {
     pub fn forget(&mut self) {
         self.reset();
         self.ground_pick = None;
+        self.bow = None;
         self.active = None;
         self.sit = Sit::Up;
         self.sit_settle = 0.0;
@@ -350,6 +370,9 @@ impl Controller {
     /// throws it over, and one move started inside another hands the second network a robot
     /// mid-pose it was never trained from.
     fn move_blocked(&self) -> Option<&'static str> {
+        if self.bow.is_some() {
+            return Some("a bow is running");
+        }
         if self.ground_pick.is_some() {
             return Some("a ground pick is running");
         }
@@ -395,6 +418,26 @@ impl Controller {
         if let Some(reason) = self.move_blocked() {
             return Err(reason);
         }
+        self.ground_pick = Some(0.0);
+        Ok(())
+    }
+
+    /// Start a polite bow: the ground pick run partway and back.
+    ///
+    /// The pick's network is driven by a phase, and the fold it makes is a function of that
+    /// phase — it is at the floor by 0.375 of its cycle and 25–30° forward by 0.13. So a bow is
+    /// the same arm with the phase eased out to `[bow] depth`, held, and eased back to zero,
+    /// retracing its own poses on the way up rather than jumping to the pick's rise, which
+    /// passes through a deeper crouch than the bow ever made. Refused for the same reasons a
+    /// pick is, and a bow during a bow is one bow.
+    pub fn start_bow(&mut self) -> Result<(), &'static str> {
+        if !self.policy.has_ground_pick() {
+            return Err("no ground-pick policy loaded, and the bow is the pick run partway");
+        }
+        if let Some(reason) = self.move_blocked() {
+            return Err(reason);
+        }
+        self.bow = Some(0.0);
         self.ground_pick = Some(0.0);
         Ok(())
     }
@@ -446,6 +489,9 @@ impl Controller {
     /// Sit if standing, stand if sitting. Refused while any other move runs, mid-rise as the
     /// prototype refuses it, and on the way down into the seat.
     pub fn sit_toggle(&mut self) -> Result<&'static str, &'static str> {
+        if self.bow.is_some() {
+            return Err("a bow is running");
+        }
         if self.ground_pick.is_some() {
             return Err("a ground pick is running");
         }
@@ -621,7 +667,12 @@ impl Controller {
                 twist: [angle.cos(), angle.sin(), 0.0],
                 ..Command::default()
             };
-            (Net::GroundPick, c, "ground_pick".into())
+            let label = if self.bow.is_some() {
+                "bow"
+            } else {
+                "ground_pick"
+            };
+            (Net::GroundPick, c, label.into())
         } else {
             let mut c = *command;
             match self.sit {
@@ -651,6 +702,7 @@ impl Controller {
         };
 
         self.last_net = Some(net);
+        self.last_bow = self.bow.is_some();
 
         let observation = Observation::build(
             &sensors.imu,
@@ -740,7 +792,16 @@ impl Controller {
 
         // Advance the windows, after the tick that used them — the prototype advances its
         // phase after the motor write.
-        if let Some(phase) = self.ground_pick.as_mut() {
+        if let Some(elapsed) = self.bow.as_mut() {
+            *elapsed += dt;
+            match bow_phase(*elapsed, &self.skills.bow) {
+                Some(phase) => self.ground_pick = Some(phase),
+                None => {
+                    self.bow = None;
+                    self.ground_pick = None;
+                }
+            }
+        } else if let Some(phase) = self.ground_pick.as_mut() {
             *phase += dt / self.skills.ground_pick_period;
             if *phase >= self.skills.ground_pick_end_phase {
                 self.ground_pick = None;
@@ -761,6 +822,30 @@ impl Controller {
             gain,
             busy: self.busy(),
         })
+    }
+}
+
+/// The pick's phase at `elapsed` seconds into a bow: eased out to `depth` over `down_s`, held
+/// for `hold_s`, eased back to zero over `up_s`, and `None` once the bow is over.
+///
+/// Smoothstep both ways, so the fold starts and stops with zero rate — the network is tracking
+/// this, and a phase that jumps is a lurch it has to catch.
+fn bow_phase(elapsed: f64, p: &robotd_params::BowParams) -> Option<f64> {
+    let ease = |x: f64| {
+        let x = x.clamp(0.0, 1.0);
+        x * x * (3.0 - 2.0 * x)
+    };
+    let down_end = p.down_s;
+    let hold_end = down_end + p.hold_s;
+    let up_end = hold_end + p.up_s;
+    if elapsed < down_end {
+        Some(p.depth * ease(elapsed / p.down_s))
+    } else if elapsed < hold_end {
+        Some(p.depth)
+    } else if elapsed < up_end {
+        Some(p.depth * ease(1.0 - (elapsed - hold_end) / p.up_s))
+    } else {
+        None
     }
 }
 
@@ -856,6 +941,92 @@ mod tests {
     fn the_ground_pick_cutoff_is_the_prototypes() {
         assert_eq!(robotd_params::DEFAULT_GROUND_PICK_END_PHASE, 0.7);
         assert_eq!(robotd_params::DEFAULT_SITSTAND_RISE_S, 1.0);
+    }
+
+    /// **The bow's phase goes out, holds, and comes back the way it went** — and ends. A profile
+    /// that jumped to the pick's rise would drop the robot through the pick's deeper crouch, and
+    /// one that did not end would leave the pick's network driving a robot nobody asked it to.
+    #[test]
+    fn the_bow_phase_turns_around_at_its_depth_and_ends() {
+        let p = robotd_params::BowParams {
+            depth: 0.13,
+            down_s: 0.8,
+            hold_s: 0.6,
+            up_s: 0.8,
+        };
+        assert_eq!(bow_phase(0.0, &p), Some(0.0));
+        assert!(
+            (bow_phase(0.4, &p).unwrap() - 0.065).abs() < 1e-9,
+            "halfway down"
+        );
+        assert_eq!(bow_phase(0.8, &p), Some(0.13));
+        assert_eq!(bow_phase(1.1, &p), Some(0.13), "held");
+        assert!(
+            (bow_phase(1.8, &p).unwrap() - 0.065).abs() < 1e-9,
+            "halfway up"
+        );
+        assert!(bow_phase(2.19, &p).unwrap() < 0.001);
+        assert_eq!(bow_phase(2.2, &p), None);
+        assert!(
+            bow_phase(0.02, &p).unwrap() < 0.0005,
+            "zero rate at the start"
+        );
+        let mut last = 0.0;
+        let mut t = 0.0;
+        while t < p.down_s {
+            let phase = bow_phase(t, &p).unwrap();
+            assert!(phase >= last - 1e-12, "monotone on the way down at {t}");
+            last = phase;
+            t += 0.02;
+        }
+    }
+
+    /// **A bow is the pick's arm, one at a time, and runs itself out.** Refused during a pick
+    /// and vice versa, since both drive the same network; reported as `bow` while it runs so a
+    /// client is not told the robot is picking something up.
+    #[test]
+    #[ignore = "requires ONNX Runtime >= 1.23"]
+    fn a_bow_drives_the_pick_network_partway_and_hands_back() {
+        let mut c = full_controller();
+        let sensors = duck_control::Sensors::default();
+        let cmd = Command::default();
+
+        assert_eq!(c.start_bow(), Ok(()));
+        assert!(c.busy());
+        assert_eq!(c.start_bow(), Err("a bow is running"));
+        assert_eq!(c.start_ground_pick(), Err("a bow is running"));
+        assert!(c.sit_toggle().is_err(), "no sit mid-bow");
+
+        let dt = 0.02;
+        let mut deepest = 0.0f64;
+        let mut ticks = 0;
+        while c.busy() && ticks < 500 {
+            c.step(&sensors, &cmd, false, dt, 1.0).expect("steps");
+            assert_eq!(c.driving(), Some(Driving::Bow));
+            deepest = deepest.max(c.ground_pick.unwrap_or(0.0));
+            ticks += 1;
+        }
+        let total = c.skills.bow.down_s + c.skills.bow.hold_s + c.skills.bow.up_s;
+        assert!(
+            (ticks as f64 * dt - total).abs() < 0.05,
+            "ran for {ticks} ticks"
+        );
+        assert!(
+            (deepest - c.skills.bow.depth).abs() < 1e-9,
+            "went to its depth: {deepest}"
+        );
+        assert!(!c.busy(), "ended itself");
+        assert_eq!(c.ground_pick, None);
+        c.step(&sensors, &cmd, false, dt, 1.0).expect("steps");
+        assert_ne!(
+            c.driving(),
+            Some(Driving::Bow),
+            "the gait has the robot back"
+        );
+
+        // And a pick refuses a bow for the same reason the other way round.
+        assert_eq!(c.start_ground_pick(), Ok(()));
+        assert_eq!(c.start_bow(), Err("a ground pick is running"));
     }
 
     /// A controller with every slot loaded — the feedforward fixture stands in for each net, which

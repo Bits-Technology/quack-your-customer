@@ -856,23 +856,23 @@ pub struct ChoraleParams {
     pub accept: bool,
 }
 
-/// `[bow]` — the polite bow, `robot.do bow` (`robotd/src/bow.rs`).
+/// `[bow]` — the polite bow, `robot.do bow` (`robotd/src/control.rs`, the ground-pick arm).
 ///
-/// Not a network: the gait is asked to lean forward and drop its head, hold it, and come back,
-/// through the body-pose and head commands it already tracks. These say how deep and how long.
-/// The lean is bounded by what the gait was trained to follow — about 12° either way for
-/// velstand — so a larger `pitch` is asking, not getting.
+/// The ground pick run partway and back: the same network, driven by a phase that turns around
+/// at `depth` instead of reaching the floor. The pick folds the trunk 34° forward, crouches, and
+/// swings the beak to the ground over the first 37 % of its cycle; stopping at 13 % is a fold of
+/// 25–30° with the head coming down, which reads as a bow, and retracing the phase back to zero
+/// brings it up the way it went down. Nothing else the robot has folds it: the gait tracks a
+/// body pitch of 12° at most, and on a 12 cm robot that is a shrug.
 ///
-/// Angles are radians, positive is forward and down; durations seconds. Read once at startup.
+/// `depth` is a fraction of the pick's cycle, 0..0.375 (the bottom); durations are seconds. Read
+/// once at startup.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct BowParams {
-    /// How far the body leans forward at the bottom of the bow.
-    pub pitch: f64,
-    /// How far the neck leans forward with it.
-    pub neck_pitch: f64,
-    /// How far the head drops.
-    pub head_pitch: f64,
+    /// How far into the ground pick's cycle the bow goes, 0..0.375. The pick is at the floor at
+    /// 0.375; 0.13 is a fold of about 30°.
+    pub depth: f64,
     /// How long the way down takes.
     pub down_s: f64,
     /// How long the bow is held at the bottom.
@@ -884,12 +884,10 @@ pub struct BowParams {
 impl Default for BowParams {
     fn default() -> Self {
         Self {
-            pitch: 0.26,
-            neck_pitch: 0.15,
-            head_pitch: 0.35,
-            down_s: 0.8,
-            hold_s: 0.6,
-            up_s: 0.8,
+            depth: 0.13,
+            down_s: 0.9,
+            hold_s: 0.7,
+            up_s: 0.9,
         }
     }
 }
@@ -897,14 +895,12 @@ impl Default for BowParams {
 impl BowParams {
     /// What is wrong with these values, if anything, as (key, reason).
     fn invalid(&self) -> Option<(&'static str, &'static str)> {
-        for (key, value) in [
-            ("pitch", self.pitch),
-            ("neck_pitch", self.neck_pitch),
-            ("head_pitch", self.head_pitch),
-        ] {
-            if !value.is_finite() || value.abs() > 1.0 {
-                return Some((key, "must be a finite angle within ±1 rad"));
-            }
+        // Past 0.375 the pick is holding at the floor, and a "bow" there is the pick itself.
+        if !(self.depth.is_finite() && self.depth > 0.0 && self.depth <= 0.375) {
+            return Some((
+                "depth",
+                "must be a fraction of the pick's cycle, above 0 and at most 0.375",
+            ));
         }
         for (key, value) in [("down_s", self.down_s), ("up_s", self.up_s)] {
             if !(value.is_finite() && value > 0.0) {

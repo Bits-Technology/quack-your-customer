@@ -125,7 +125,7 @@ enum Command {
     /// after `pep wake`.
     ///
     /// The tricks every duck ships with:
-    ///   bow            a polite bow: lean forward, head down, hold, and back up — about 2 s
+    ///   bow            a polite bow: the ground pick run partway and back, about 2.5 s
     ///   roulade        a forward roll over the head, 1 s, landing back on its feet
     ///   kick_left      a left-leg kick, 0.5 s
     ///   kick_right     a right-leg kick, 0.5 s

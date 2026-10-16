@@ -488,19 +488,9 @@ pub const REGISTRY: &[Entry] = &[
     ),
     // ── [bow] ────────────────────────────────────────────────────────────────
     entry(
-        "bow.pitch",
+        "bow.depth",
         Kind::Float,
-        "How far the body leans forward at the bottom of the bow, radians",
-    ),
-    entry(
-        "bow.neck_pitch",
-        Kind::Float,
-        "How far the neck leans forward with it, radians",
-    ),
-    entry(
-        "bow.head_pitch",
-        Kind::Float,
-        "How far the head drops, radians",
+        "How far into the ground pick's cycle the bow goes, 0..0.375 (the floor)",
     ),
     entry("bow.down_s", Kind::Float, "Seconds the way down takes"),
     entry("bow.hold_s", Kind::Float, "Seconds held at the bottom"),
