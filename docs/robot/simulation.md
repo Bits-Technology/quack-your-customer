@@ -32,7 +32,9 @@ encoder are absent, not modelled; a bug in one of those is only visible on a rob
 - This repo, built for your machine (`cargo build` happens on its own).
 - A checkout of `microduck_rl` with its venv — beside this repo, or wherever `DUCK_SIM_RL` points.
   It provides `duck-body`, the scenes, and the `libonnxruntime` a laptop otherwise lacks. The
-  camera lives on its `develop` branch.
+  camera lives on its `develop` branch. On Linux the flake shell carries `uv` and Python 3.12 and
+  points `DUCK_SIM_RL` at a checkout beside this repo, so `uv sync` in that checkout is the whole
+  step; `flake.nix` says why that project builds without isolation there.
 - For a duck with a camera off Linux: `brew install gstreamer libnice-gstreamer`. The first is one
   merged formula carrying `webrtcsink`, srtp and x264. The second is the ICE agent `webrtcbin`
   needs, and the first does not depend on it — without it the duck comes up and streams to nothing,

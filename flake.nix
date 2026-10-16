@@ -20,54 +20,108 @@
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  🦆 quack-your-customer — Agent Pep, Duck Diligence Officer"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "  Rust $(rustc -V | cut -d' ' -f2) | cargo $(cargo -V | cut -d' ' -f2)"
+          echo "  Rust $(rustc -V | cut -d' ' -f2) | cargo $(cargo -V | cut -d' ' -f2) | uv $(uv -V | cut -d' ' -f2)"
           echo ""
           echo "  Quick Start:"
           echo "    cargo test --workspace     Check the checkout (no hardware, no network)"
           echo "    cargo fmt --all            Format"
           echo "    cargo clippy --workspace   Lint"
+          echo "    scripts/duck-sim           A duck in MuJoCo (docs/robot/simulation.md)"
           echo "    ssh microduck              Visit Pep: robotctl monitor | configure | update"
           echo ""
           echo "  CONTRIBUTING.md covers building, the board target and releases"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo ""
         '';
+
+        # microduck_rl's PEP 517 backend is `uv_build`, which PyPI ships as a prebuilt binary that
+        # NixOS cannot run (no /lib64 loader), so `uv sync` there dies building the project itself
+        # after installing everything else. nixpkgs builds the same backend from source: put it on
+        # PATH (the shim calls `uv-build` by name) and on PYTHONPATH (the venv imports `uv_build`),
+        # and build that one project without isolation so uv uses it instead of fetching PyPI's.
+        uvBuild = pkgs.python312Packages.uv-build;
+        uvConfig = pkgs.writeText "uv.toml" ''
+          no-build-isolation-package = ["mjlab-microduck"]
+        '';
+
+        # What the simulator's binary wheels dlopen and expect the system to provide. NixOS has
+        # no /usr/lib, so they are put on LD_LIBRARY_PATH: libstdc++/libgomp for mujoco, torch and
+        # onnxruntime (robotd dlopens the venv's libonnxruntime too), and the GL and window-system
+        # libraries the MuJoCo viewer's bundled glfw opens by name.
+        wheelLibs = with pkgs; [
+          stdenv.cc.cc.lib
+          zlib
+          libglvnd
+          libxkbcommon
+          wayland
+          libx11
+          libxcursor
+          libxext
+          libxfixes
+          libxi
+          libxinerama
+          libxrandr
+          libxrender
+        ];
       in
       {
-        devShells.default = pkgs.mkShell {
-          packages = [
-            # Interactive bash (readline) so a direnv-modified PATH does not break shopt/vi mode.
-            pkgs.bashInteractive
+        devShells.default = pkgs.mkShell (
+          {
+            packages = [
+              # Interactive bash (readline) so a direnv-modified PATH does not break shopt/vi mode.
+              pkgs.bashInteractive
 
-            # Rust. CONTRIBUTING.md: floor 1.89, and code must not need anything past 1.94.1,
-            # the Yocto image's compiler. nixpkgs stable is newer than that ceiling, same as CI.
-            pkgs.cargo
-            pkgs.rustc
-            pkgs.clippy
-            pkgs.rustfmt
-            pkgs.rust-analyzer
+              # Rust. CONTRIBUTING.md: floor 1.89, and code must not need anything past 1.94.1,
+              # the Yocto image's compiler. nixpkgs stable is newer than that ceiling, same as CI.
+              pkgs.cargo
+              pkgs.rustc
+              pkgs.clippy
+              pkgs.rustfmt
+              pkgs.rust-analyzer
 
-            pkgs.pkg-config
-            pkgs.git
-            pkgs.jq
-          ]
-          ++ lib.optionals pkgs.stdenv.isLinux [
-            # The C libraries CI apt-installs: padd binds libudev through gilrs, and mediad's
-            # GStreamer pipeline is cfg(target_os = "linux"). A Mac needs none of these.
-            pkgs.udev
-            pkgs.glib
-            pkgs.gst_all_1.gstreamer
-            pkgs.gst_all_1.gst-plugins-base
-            pkgs.gst_all_1.gst-plugins-bad
-          ];
+              pkgs.pkg-config
+              pkgs.git
+              pkgs.jq
 
-          # nixpkgs' rustc does not ship the standard library sources; rust-analyzer reads this.
-          RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
+              # The simulated duck (docs/robot/simulation.md): `scripts/duck-sim` runs the daemons
+              # against microduck_rl's MuJoCo body, a uv project pinned to Python 3.12. The
+              # interpreter has to be this one — a uv-downloaded build has no loader on NixOS.
+              pkgs.uv
+              pkgs.python312
+              uvBuild
+            ]
+            ++ lib.optionals pkgs.stdenv.isLinux [
+              # The C libraries CI apt-installs: padd binds libudev through gilrs, and mediad's
+              # GStreamer pipeline is cfg(target_os = "linux"). A Mac needs none of these.
+              pkgs.udev
+              pkgs.glib
+              pkgs.gst_all_1.gstreamer
+              pkgs.gst_all_1.gst-plugins-base
+              pkgs.gst_all_1.gst-plugins-bad
+            ];
 
-          shellHook = ''
-            ${welcomeMessage}
-          '';
-        };
+            # nixpkgs' rustc does not ship the standard library sources; rust-analyzer reads this.
+            RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
+
+            # uv uses the interpreter above and never fetches one of its own.
+            UV_PYTHON_DOWNLOADS = "never";
+            UV_PYTHON_PREFERENCE = "only-system";
+            # Stands in for ~/.config/uv/uv.toml inside this shell; a project's own [tool.uv] still
+            # applies on top. See uvBuild above.
+            UV_CONFIG_FILE = uvConfig;
+            PYTHONPATH = "${uvBuild}/${pkgs.python312.sitePackages}";
+
+            shellHook = ''
+              # Where `scripts/duck-sim` finds the MuJoCo half: a microduck_rl checkout beside this
+              # repo, unless DUCK_SIM_RL already says otherwise.
+              export DUCK_SIM_RL="''${DUCK_SIM_RL:-$(cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)/.." && pwd)/microduck_rl}"
+              ${welcomeMessage}
+            '';
+          }
+          // lib.optionalAttrs pkgs.stdenv.isLinux {
+            LD_LIBRARY_PATH = lib.makeLibraryPath wheelLibs;
+          }
+        );
       }
     );
 }
