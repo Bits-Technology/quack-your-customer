@@ -79,20 +79,28 @@ WHO="${DUCK_SIM_DUCK:-}"
 # pointed at the wrong path.
 ctl() {
     name="${WHO:-$(duck_name 0)}"
-    # **`configure` edits a file rather than talking to a socket**, and its `--file` is not one of
-    # robotctl's global flags — so it is the one subcommand that has to be told which duck's params
-    # to open, and it cannot simply be added to the list below. Left alone it reads
-    # /etc/robot/robotd.toml, which is right on a robot and on a laptop does not exist: the answer
-    # was "changes nothing — every value is the default", about a file nobody has.
-    if [ "${1:-}" = configure ]; then
-        shift
-        set -- configure --file "$STATE/robotd-$name.toml" "$@"
-    fi
+    # **`configure` and `policy` edit a file rather than talking to a socket**, and their `--file`
+    # is not one of robotctl's global flags — so they are the two subcommands that have to be told
+    # which duck's params to open, and cannot simply be added to the list below. Left alone they
+    # read /etc/robot/robotd.toml, which is right on a robot and on a laptop does not exist: for
+    # `configure` the answer was "changes nothing — every value is the default", about a file
+    # nobody has, and `policy add` refused with "try sudo" about the same file while the daemon
+    # beside it would happily have recorded the change in the one it was started with.
+    case "${1:-}" in
+        configure|policy)
+            verb="$1"
+            shift
+            set -- "$verb" --file "$STATE/robotd-$name.toml" "$@"
+            ;;
+    esac
+    # `--pad-config` is the same file for the `pad` commands, which do have a global flag for it:
+    # `pad bind` checks it can be written before asking the daemon to, and `pad bindings` reads it.
     "$REPO/target/debug/robotctl" \
         --robot-socket "$STATE/$name.sock" \
         --tof-socket "$STATE/$name-tof.sock" \
         --config-socket "$STATE/$name-config.sock" \
         --socket "$STATE/$name-updater.sock" \
+        --pad-config "$STATE/robotd-$name.toml" \
         "$@"
 }
 
