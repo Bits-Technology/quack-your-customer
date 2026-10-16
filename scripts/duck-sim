@@ -39,7 +39,10 @@
 set -eu
 
 STATE="${DUCK_SIM_STATE:-$HOME/.cache/duck-sim}"
-RL="${DUCK_SIM_RL:-$HOME/Pollen/microduck_rl}"
+# Where the MuJoCo half is. `DUCK_SIM_RL` says; otherwise a `microduck_rl` beside this repo, which is
+# what docs/robot/simulation.md tells people to make and what the Nix shell points at — resolved
+# below, once `REPO` is known — and failing both, where it first lived.
+RL="${DUCK_SIM_RL:-}"
 PORT="${DUCK_SIM_PORT:-7801}"
 
 # `setsid` is util-linux: Linux has it, a Mac does not. What it buys is a daemon in its own session,
@@ -66,9 +69,30 @@ CAMERAS="${DUCK_SIM_CAMERAS:-}"
 FRAME_PORT="${DUCK_SIM_FRAME_PORT:-7901}"
 SOCK="$STATE/duck.sock"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
+if [ -z "$RL" ]; then
+    if [ -d "$REPO/../microduck_rl" ]; then
+        RL="$(cd "$REPO/../microduck_rl" && pwd)"
+    else
+        RL="$HOME/Pollen/microduck_rl"
+    fi
+fi
 
 say()  { printf '\033[36m==\033[0m %s\n' "$*"; }
 die()  { printf 'error: %s\n' "$*" >&2; exit 1; }
+
+# **The simulator's own Python, everywhere this script needs one.** `drive` speaks JSON-RPC to the
+# duck, `status` and `realtime` ask the body for the trunk and the clock, `up` knocks on its port —
+# and every one of them said `python3`, which is on the path inside the repo's Nix shell and
+# nowhere else on a NixOS laptop, so `drive` died with "command not found" from any other
+# terminal while `status` quietly reported nothing. The venv `up` already insists on has an
+# interpreter whatever the host does; `python3` stays as the fallback for a host with no venv.
+sim_python() {
+    if [ -x "$RL/.venv/bin/python" ]; then
+        echo "$RL/.venv/bin/python"
+    else
+        command -v python3 || die "no python: neither $RL/.venv nor python3 on the path"
+    fi
+}
 
 # Which duck `ctl` talks to. `DUCK_SIM_DUCK=duck-b scripts/duck-sim ctl monitor` for another.
 WHO="${DUCK_SIM_DUCK:-}"
@@ -186,7 +210,7 @@ down() {
     rm -f "$SOCK"
     # Verified, not assumed: `down` reporting success while a MuJoCo window is still open is worse
     # than saying nothing, and is exactly what the subshell bug above produced.
-    if python3 -c "import socket,sys;s=socket.socket();s.settimeout(.3);sys.exit(0 if s.connect_ex(('127.0.0.1',$PORT))==0 else 1)" 2>/dev/null; then
+    if "$(sim_python)" -c "import socket,sys;s=socket.socket();s.settimeout(.3);sys.exit(0 if s.connect_ex(('127.0.0.1',$PORT))==0 else 1)" 2>/dev/null; then
         say "something is still listening on $PORT — not started by this script?"
         say "  pkill -f 'body_serve[r]'   # brackets: do not match your own command line"
         return 1
@@ -242,13 +266,16 @@ up() {
     build_daemons
     policies
 
-    # Every policy named explicitly: `RELEASE_DIR` is /opt/robot/daemon/current, which exists on a
+    # Every policy named explicitly: `POLICY_DIR` is /opt/robot/policies/current, which exists on a
     # robot and not here, and `PolicyParams::resolved` uses a named path verbatim when it has one.
+    # The slots are what a robot resolves to on its own (`PolicyParams::resolved_with`): velstand
+    # as the gait, which stands still at zero command, so no standing network beside it. The twin
+    # ran `alpha_walking` + `alpha_stand` for a while after the robot stopped, and a twin running a
+    # different gait from the robot is a twin of something else.
     cat > "$STATE/robotd.toml" <<TOML
 [policy]
 enabled = true
-walk = "$POLICIES/alpha_walking.onnx"
-stand = "$POLICIES/alpha_stand.onnx"
+walk = "$POLICIES/velstand.onnx"
 sitstand = "$POLICIES/alpha_sitstand.onnx"
 ground_pick = "$POLICIES/alpha_ground_pick.onnx"
 kick_left = "$POLICIES/ball_kick_left.onnx"
@@ -550,7 +577,7 @@ NEXT
 stand() { stand_at "$SOCK"; }
 
 stand_at() {
-    python3 - "$1" <<'PY'
+    "$(sim_python)" - "$1" <<'PY'
 import json, socket, sys
 s = socket.socket(socket.AF_UNIX); s.settimeout(5); s.connect(sys.argv[1])
 f = s.makefile("rw")
@@ -571,7 +598,7 @@ PY
 upright() { upright_at "$PORT" "the duck"; }
 
 upright_at() {
-    read_z="$(python3 - "$1" <<'PY'
+    read_z="$("$(sim_python)" - "$1" <<'PY'
 import json, socket, sys
 s = socket.socket(); s.settimeout(2); s.connect(("127.0.0.1", int(sys.argv[1])))
 f = s.makefile("rw")
@@ -583,7 +610,7 @@ PY
 )" || return 0
     trunk="${read_z% *}"
     z="${read_z#* }"
-    standing="$(python3 -c "print(1 if $trunk > 0.095 else 0)" 2>/dev/null || echo 0)"
+    standing="$("$(sim_python)" -c "print(1 if $trunk > 0.095 else 0)" 2>/dev/null || echo 0)"
     if [ "$standing" = 1 ]; then
         case "$z" in
             -0.9*|-1*) say "$2: standing (trunk $trunk m, gravity z $z)"; return 0 ;;
@@ -704,8 +731,8 @@ wait_for_port() {
     i=0
     while [ $i -lt 100 ]; do
         # Not /dev/tcp: that is a bash builtin and this is #!/bin/sh, which is dash on Debian
-        # and Ubuntu. python3 is already required by `drive`, so it is the portable knock.
-        if python3 -c "import socket,sys;s=socket.socket();s.settimeout(.3);sys.exit(s.connect_ex(('127.0.0.1',$PORT)))" 2>/dev/null; then
+        # and Ubuntu. The simulator's python is already required by `up`, so it is the portable knock.
+        if "$(sim_python)" -c "import socket,sys;s=socket.socket();s.settimeout(.3);sys.exit(s.connect_ex(('127.0.0.1',$PORT)))" 2>/dev/null; then
             return 0
         fi
         i=$((i + 1)); sleep 0.2
@@ -726,10 +753,16 @@ wait_for_socket() {
 # smallest client that sends one. Resent at 10 Hz because `robotd` expires an intent 500 ms after
 # they stop arriving, which is what makes a dropped connection stop the robot rather than run it
 # into a wall.
+# **0.3 m/s, because the twin follows about a third of what it is asked.** Measured with
+# velstand on the bare floor: 0.2 → 0.06 m/s, 0.3 → 0.10, 0.4 → 0.135, and the old default of 0.15
+# steps in place and goes nowhere — which read as `drive` being broken. The gap is the actuator
+# and contact model, not the daemon (the same twist moves a robot at the speed it names), so the
+# default asks for a speed that is visibly a walk here. `vx_max` is 0.4; above it is asking, not
+# getting.
 drive() {
     [ -S "$SOCK" ] || die "no duck. \`scripts/duck-sim\` first."
     say "walking forward for 8 s"
-    python3 - "$SOCK" "${1:-0.15}" "${2:-0.0}" <<'PY'
+    "$(sim_python)" - "$SOCK" "${1:-0.3}" "${2:-0.0}" <<'PY'
 import json, socket, sys, time
 sock, vx, vyaw = sys.argv[1], float(sys.argv[2]), float(sys.argv[3])
 s = socket.socket(socket.AF_UNIX); s.connect(sock)
@@ -747,7 +780,7 @@ PY
 # real time is not merely slow to watch — the policies are driving robots that move less than they
 # expect, and they cannot balance one. Reported rather than left to be felt.
 realtime() {
-    factor="$(python3 - "$PORT" <<'PY'
+    factor="$("$(sim_python)" - "$PORT" <<'PY'
 import json, socket, sys, time
 s = socket.socket(); s.settimeout(5); s.connect(("127.0.0.1", int(sys.argv[1])))
 f = s.makefile("rw")
