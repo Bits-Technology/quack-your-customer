@@ -695,6 +695,15 @@ start_body() {
     # line that would mean something if the simulator really were falling behind. 30 costs about a
     # third of a core per camera, which is the trade `DUCK_SIM_CAMERAS` already exists to let you
     # decline.
+    # **The viewer's camera follows the duck**, at a distance, angle and height that keep a 12 cm
+    # robot in the window, steered from the keyboard — a mouse is not a given, and a duck that
+    # walks off or rolls over leaves a free camera's frame. `DUCK_SIM_VIEW=free` is the viewer's
+    # own camera; `follow:0.5,90,-30` picks the metres, azimuth and elevation. Passed only when the
+    # body server knows the flag, for the same reason the camera flags are.
+    view_args=""
+    if grep -q -- '"--view"' "$RL/src/mjlab_microduck/sim/body_server.py" 2>/dev/null; then
+        view_args="--view ${DUCK_SIM_VIEW:-follow}"
+    fi
     cam_args=""
     if [ -n "$CAMERAS" ]; then
         cam_args="--cameras $CAMERAS --frame-port $FRAME_PORT --camera-fps 30"
@@ -702,7 +711,7 @@ start_body() {
     # shellcheck disable=SC2086
     $SETSID nohup "$PY_BIN" -m mjlab_microduck.sim.body_server \
         --port "$PORT" --ducks "$DUCKS" --keyframe "${DUCK_SIM_KEYFRAME:-SIT}" $HEADLESS $scene_arg \
-        $cam_args \
+        $cam_args $view_args \
         > "$STATE/body.log" 2>&1 &
     echo $! > "$STATE/body.pid"
     if ! wait_for_port; then

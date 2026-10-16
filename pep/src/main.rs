@@ -86,6 +86,10 @@ enum Command {
     ///   DUCK_SIM_SCENE=apartment   six rooms instead of a bare floor
     ///   DUCK_SIM_CAMERAS=a         give Pep an eye; the console is then at http://127.0.0.1:8080
     ///   DUCK_SIM_KEYFRAME=STAND    start standing instead of seated
+    ///   DUCK_SIM_VIEW=follow       the camera follows Pep (default); free is the mouse camera;
+    ///                              follow:0.5,90,-30 is metres, azimuth, elevation
+    ///
+    /// In the window, no mouse needed: arrows orbit, Page Up/Down zoom, Home resets, F lets go.
     ///
     /// Needs a microduck_rl checkout with its venv beside this repo, or wherever DUCK_SIM_RL
     /// points. For the real unit files under systemd, `pep sim boot 4` instead.
