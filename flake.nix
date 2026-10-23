@@ -35,7 +35,7 @@
           echo ""
         '';
 
-        # microduck_rl's PEP 517 backend is `uv_build`, which PyPI ships as a prebuilt binary that
+        # The training repo's PEP 517 backend is `uv_build`, which PyPI ships as a prebuilt binary that
         # NixOS cannot run (no /lib64 loader), so `uv sync` there dies building the project itself
         # after installing everything else. nixpkgs builds the same backend from source: put it on
         # PATH (the shim calls `uv-build` by name) and on PYTHONPATH (the venv imports `uv_build`),
@@ -92,7 +92,7 @@
               pkgs.jq
 
               # The simulated duck (docs/robot/simulation.md): `scripts/duck-sim` runs the daemons
-              # against microduck_rl's MuJoCo body, a uv project pinned to Python 3.12. The
+              # against the training repo's MuJoCo body, a uv project pinned to Python 3.12. The
               # interpreter has to be this one — a uv-downloaded build has no loader on NixOS.
               pkgs.uv
               pkgs.python312
@@ -122,10 +122,11 @@
             PYTHONPATH = "${uvBuild}/${pkgs.python312.sitePackages}";
 
             shellHook = ''
-              # Where `scripts/duck-sim` finds the MuJoCo half: a microduck_rl checkout beside this
+              # Where `scripts/duck-sim` finds the MuJoCo half: pep-compliance-training, our fork of
+              # Pollen's microduck_rl, checked out beside this
               # repo, unless DUCK_SIM_RL already says otherwise.
               export PEP_REPO="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-              export DUCK_SIM_RL="''${DUCK_SIM_RL:-$(cd "$PEP_REPO/.." && pwd)/microduck_rl}"
+              export DUCK_SIM_RL="''${DUCK_SIM_RL:-$(cd "$PEP_REPO/.." && pwd)/pep-compliance-training}"
               ${welcomeMessage}
             '';
           }

@@ -30,11 +30,12 @@ encoder are absent, not modelled; a bug in one of those is only visible on a rob
 ## What you need
 
 - This repo, built for your machine (`cargo build` happens on its own).
-- A checkout of `microduck_rl` with its venv — beside this repo, or wherever `DUCK_SIM_RL` points.
-  It provides `duck-body`, the scenes, and the `libonnxruntime` a laptop otherwise lacks. The
-  camera lives on its `develop` branch. On Linux the flake shell carries `uv` and Python 3.12 and
-  points `DUCK_SIM_RL` at a checkout beside this repo, so `uv sync` in that checkout is the whole
-  step; `flake.nix` says why that project builds without isolation there.
+- A checkout of `pep-compliance-training` — our fork of Pollen's `microduck_rl`, where Pep is
+  trained — with its venv, beside this repo or wherever `DUCK_SIM_RL` points. It provides
+  `duck-body`, the scenes, and the `libonnxruntime` a laptop otherwise lacks. On Linux the flake
+  shell carries `uv` and Python 3.12 and points `DUCK_SIM_RL` at a checkout beside this repo, so
+  `uv sync` in that checkout is the whole step; `flake.nix` says why that project builds without
+  isolation there.
 - For a duck with a camera off Linux: `brew install gstreamer libnice-gstreamer`. The first is one
   merged formula carrying `webrtcsink`, srtp and x264. The second is the ICE agent `webrtcbin`
   needs, and the first does not depend on it — without it the duck comes up and streams to nothing,
@@ -49,7 +50,7 @@ Both drive the same MuJoCo body with the same `robotd`. They differ in what the 
 | | `scripts/duck-sim` (`up`) | `scripts/duck-sim boot N` |
 |---|---|---|
 | The daemons run as | plain processes, your user, a pidfile each | systemd services inside a `systemd-nspawn` container per duck, from the real unit files |
-| Needs | nothing beyond the repo and `microduck_rl` | `sudo`, a one-time Debian rootfs build |
+| Needs | nothing beyond the repo and `pep-compliance-training` | `sudo`, a one-time Debian rootfs build |
 | Starts in | seconds | a minute the first time, seconds after |
 | Identity | your laptop's; several ducks are one process tree | a machine-id, a voice and a socket per duck, and `duck-ether` between them |
 | Exercises | the control loop, policies, IPC, `robotctl`, the console | all of that, plus `User=`/groups/`RuntimeDirectory=`/hardening, the updater's apply, health gate, rollback and restart order, `journalctl` |
@@ -163,7 +164,7 @@ Environment variables, all optional:
 
 | Variable | Default | What it does |
 |---|---|---|
-| `DUCK_SIM_RL` | `~/Pollen/microduck_rl` | Where `duck-body`, the scenes and the ONNX runtime are. |
+| `DUCK_SIM_RL` | `../pep-compliance-training` | Where `duck-body`, the scenes and the ONNX runtime are: the training repo beside this one, or Pollen's own checkout wherever it is. |
 | `DUCK_SIM_STATE` | `~/.cache/duck-sim` | Sockets, logs, params, the rootfs and the ducks' overlays. Short on purpose: a unix socket path is capped at about 108 bytes. |
 | `DUCK_SIM_DUCKS` | `1` | How many ducks; `boot N` sets it too. |
 | `DUCK_SIM_SCENE` | bare floor | A scene name (`apartment`) or a path. |
@@ -176,6 +177,13 @@ Environment variables, all optional:
 | `DUCK_SIM_FRAME_PORT` | `7901` | The first camera's frame port; +1 per camera. |
 
 ## Things worth knowing
+
+**Skills survive a wake; slots do not.** `up` rewrites the duck's params file from the script's
+template, and used to forget everything `policy add` had recorded. It now carries the
+`[[policy.skill]]` entries over, so a trick you taught the twin is still there after the next
+`scripts/duck-sim` — `policy remove <name>` is how it leaves. A gait loaded into a slot with
+`policy load` is reset to the template's each time, deliberately: that is an experiment, not a
+setting.
 
 **Real time matters.** The daemons' loops are wall-clock. A simulator running below 1.0× real time
 is not merely slow to watch: the policies are driving a robot that moves less than they expect, and

@@ -93,7 +93,7 @@ enum Command {
     /// Pep, End is the free overview, and each resets its view when pressed again. The letters
     /// belong to the viewer: F toggles contact-force arrows, C contact points, T transparency.
     ///
-    /// Needs a microduck_rl checkout with its venv beside this repo, or wherever DUCK_SIM_RL
+    /// Needs a pep-compliance-training checkout with its venv beside this repo, or wherever DUCK_SIM_RL
     /// points. For the real unit files under systemd, `pep sim boot 4` instead.
     #[command(verbatim_doc_comment)]
     Wake,
@@ -102,7 +102,7 @@ enum Command {
     /// Stops the body and every daemon `pep wake` started, by pidfile, and any containers
     /// `pep sim boot` left running. Nothing to confirm, and the MuJoCo window closes with it.
     /// Nothing falls over on the way out: the body is a simulation, and it is simply gone until
-    /// the next wake.
+    /// the next wake — which remembers the tricks added with `pep ctl policy add`.
     Sleep,
     /// Is the loop healthy, and is Pep standing?
     ///
@@ -132,10 +132,11 @@ enum Command {
     ///   sit_toggle     sit down, or stand back up if seated
     ///   ground_pick    crouch, touch the ground with the beak, stand back up
     ///
-    /// `pep skills` lists what this Pep has, including anything added from the Hub with
-    /// `pep ctl policy add <name> <user>/microduck-<name> [--hold <seconds>]`. A name Pep does
-    /// not know is refused with the list it does. `sitstand` is accepted for `sit_toggle` — it
-    /// is the gait slot's name, not the trick's — and `kick-left` for `kick_left`.
+    /// `pep skills` lists what this Pep has, including anything added from the Hub or from a
+    /// file with `pep ctl policy add <name> <repo-or-path> [--hold <seconds>]`; those survive a
+    /// `pep sleep` and `pep wake`. A name Pep does not know is refused with the list it does.
+    /// `sitstand` is accepted for `sit_toggle` — it is the gait slot's name, not the trick's —
+    /// and `kick-left` for `kick_left`.
     #[command(verbatim_doc_comment)]
     Do {
         /// The skill's name, as `pep skills` lists it. Hyphens are fine; `sitstand` means

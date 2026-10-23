@@ -39,7 +39,8 @@
 set -eu
 
 STATE="${DUCK_SIM_STATE:-$HOME/.cache/duck-sim}"
-# Where the MuJoCo half is. `DUCK_SIM_RL` says; otherwise a `microduck_rl` beside this repo, which is
+# Where the MuJoCo half is. `DUCK_SIM_RL` says; otherwise `pep-compliance-training` — our fork of
+# Pollen's microduck_rl — beside this repo, which is
 # what docs/robot/simulation.md tells people to make and what the Nix shell points at — resolved
 # below, once `REPO` is known — and failing both, where it first lived.
 RL="${DUCK_SIM_RL:-}"
@@ -70,8 +71,8 @@ FRAME_PORT="${DUCK_SIM_FRAME_PORT:-7901}"
 SOCK="$STATE/duck.sock"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 if [ -z "$RL" ]; then
-    if [ -d "$REPO/../microduck_rl" ]; then
-        RL="$(cd "$REPO/../microduck_rl" && pwd)"
+    if [ -d "$REPO/../pep-compliance-training" ]; then
+        RL="$(cd "$REPO/../pep-compliance-training" && pwd)"
     else
         RL="$HOME/Pollen/microduck_rl"
     fi
@@ -252,7 +253,7 @@ policies() {
 }
 
 up() {
-    [ -d "$RL" ] || die "no simulator at $RL. It is the microduck_rl repo — set DUCK_SIM_RL."
+    [ -d "$RL" ] || die "no simulator at $RL. It is the pep-compliance-training repo (Pollen's microduck_rl) — set DUCK_SIM_RL."
     [ -x "$RL/.venv/bin/python" ] || die "$RL has no .venv. Run \`uv sync\` there first."
     # `.so.<version>` on Linux, `.<version>.dylib` on macOS — the wheel names it after the platform
     # and `ort` dlopens whatever this points at, so both spellings are looked for rather than one.
@@ -311,8 +312,23 @@ TOML
     i=0
     while [ "$i" -lt "$DUCKS" ]; do
         name="$(duck_name "$i")"
+        # **Skills survive a wake.** `policy add` records its entry in this duck's params file,
+        # which `up` rewrites from the template above — so a trick added yesterday was gone this
+        # morning, and the twin forgot a bow it had been taught. The `[[policy.skill]]` tables
+        # the daemon wrote are lifted out of the old file and appended to the new one; the slots
+        # are not, since a loaded gait is a deliberate experiment and the template's are the
+        # robot's own. A block runs from its header to the next `[` header or the end of file,
+        # which is the shape `toml_edit` writes them in; the next section's leading comments
+        # fall inside that range and are dropped, so they are not carried along as well.
+        carried="$(awk '/^\[\[policy\.skill\]\]/ { keep = 1 } /^\[[^[]/ { keep = 0 } keep' \
+            "$STATE/robotd-$name.toml" 2>/dev/null | grep -v '^#' | cat -s || true)"
         sed -e "s|/sounds/DUCK|/sounds/$name|" -e "s|/DUCK-tof.sock|/$name-tof.sock|" \
             "$STATE/robotd.toml" > "$STATE/robotd-$name.toml"
+        if [ -n "$carried" ]; then
+            printf '\n# Skills added with `policy add`, kept across wakes by scripts/duck-sim.\n%s\n' \
+                "$carried" >> "$STATE/robotd-$name.toml"
+            say "$name keeps its skills: $(printf '%s\n' "$carried" | sed -n 's/^name = "\(.*\)"/\1/p' | tr '\n' ' ')"
+        fi
         if [ ! -d "$STATE/sounds/$name" ]; then
             say "rendering $name a voice"
             DUCK_IDENTITY="$name" "$REPO/target/debug/sounds" ensure-bank \
@@ -657,7 +673,7 @@ has_camera() {
 # The body, on the host in both modes: MuJoCo is not going in a container, and the container shares
 # the host's network namespace so localhost is the same localhost either way.
 start_body() {
-    [ -d "$RL" ] || die "no simulator at $RL. It is the microduck_rl repo — set DUCK_SIM_RL."
+    [ -d "$RL" ] || die "no simulator at $RL. It is the pep-compliance-training repo (Pollen's microduck_rl) — set DUCK_SIM_RL."
     [ -x "$RL/.venv/bin/python" ] || die "$RL has no .venv. Run \`uv sync\` there first."
     mkdir -p "$STATE"
     say "starting the body from $RL — a MuJoCo window should open"
